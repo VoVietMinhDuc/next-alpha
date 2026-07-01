@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Run artefacts (keep the folders, ignore generated content)
+logs/*.json
+data/articles/*.md
+data/state.json
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

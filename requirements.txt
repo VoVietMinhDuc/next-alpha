@@ -1,0 +1,6 @@
+# Pin versions before submitting. Trim to what you actually use.
+requests>=2.31
+openai>=1.40
+markdownify>=0.13
+beautifulsoup4>=4.12
+python-dotenv>=1.0
