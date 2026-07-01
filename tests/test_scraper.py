@@ -8,7 +8,7 @@ import pytest
 import requests
 import responses
 
-from src import scraper
+from src import config, scraper
 
 
 # --------------------------------------------------------------------------- #
@@ -144,7 +144,7 @@ class TestFetchArticles:
 
     @responses.activate
     def test_respects_limit(self, monkeypatch):
-        monkeypatch.setattr(scraper, "LIMIT", 2)
+        monkeypatch.setattr(config, "MAX_ARTICLES", 2)
         responses.add(
             responses.GET,
             scraper.ARTICLES_URL,
@@ -161,7 +161,7 @@ class TestFetchArticles:
 
     @responses.activate
     def test_follows_cursor_pagination(self, monkeypatch):
-        monkeypatch.setattr(scraper, "LIMIT", 100)  # don't cap; exercise pagination
+        monkeypatch.setattr(config, "MAX_ARTICLES", 100)  # don't cap; exercise pagination
         next_url = "https://support.optisigns.com/api/v2/help_center/en-us/articles?page[after]=abc"
         responses.add(
             responses.GET,

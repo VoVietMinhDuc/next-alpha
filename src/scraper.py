@@ -10,11 +10,12 @@ Run standalone for development:
 """
 
 # not evaluated at runtime, but useful for IDEs and type checkers
-from __future__ import annotations 
+from __future__ import annotations
 
+import logging # structured run output instead of bare print
 import re # used for slugify and collapsing blank lines
 import unicodedata # solve unicode issues in slugify
-from pathlib import Path 
+from pathlib import Path
 
 import requests # http
 
@@ -22,13 +23,14 @@ from bs4 import BeautifulSoup # html parsing
 
 from markdownify import markdownify as md # html -> markdown
 
-from . import config 
+from . import config
+
+log = logging.getLogger(__name__)
 
 # Zendesk Help Center articles endpoint for the en-us locale.
 ARTICLES_URL = f"{config.ZENDESK_BASE_URL}/en-us/articles"
 PAGE_SIZE = 100
 REQUEST_TIMEOUT = 30
-LIMIT = 10
 
 
 def fetch_articles() -> list[dict]:
@@ -42,6 +44,9 @@ def fetch_articles() -> list[dict]:
     session.headers.update({"Accept": "application/json"})
 
     
+    # MAX_ARTICLES <= 0 means "no cap": pull every published article.
+    limit = config.MAX_ARTICLES if config.MAX_ARTICLES > 0 else None
+
     articles: list[dict] = []
     url: str | None = ARTICLES_URL
     params: dict | None = {"page[size]": PAGE_SIZE}
@@ -51,16 +56,16 @@ def fetch_articles() -> list[dict]:
         response = session.get(url, params=params, timeout=REQUEST_TIMEOUT)
         # Raise an exception for any non-2xx response (e.g., 401, 403, 404, 500).
         response.raise_for_status()
-        #print(response.text)  
+        #print(response.text)
         payload = response.json() #parse to dict
 
         for article in payload.get("articles", []):
             if article.get("draft"):
                 continue  # skip unpublished drafts
             articles.append(article)
-            # number of articles
-            if len(articles) >= LIMIT:
-                return articles[:LIMIT]
+            # Stop as soon as we hit the configured cap (if any).
+            if limit is not None and len(articles) >= limit:
+                return articles[:limit]
 
         # Cursor pagination: links.next already carries the page[after] cursor.
         meta = payload.get("meta", {})
@@ -135,5 +140,6 @@ def scrape() -> list[Path]:
 
 
 if __name__ == "__main__": #run only if this file is executed directly (not imported)
+    config.setup_logging()
     written = scrape()
-    print(f"Scraped {len(written)} articles -> {config.ARTICLES_DIR}")
+    log.info("scraped %d articles -> %s", len(written), config.ARTICLES_DIR)

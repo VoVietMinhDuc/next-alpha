@@ -12,13 +12,16 @@ SDK:  https://github.com/googleapis/python-genai
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from pathlib import Path
 
 from google import genai
 
-from . import config
+from . import config, delta
+
+log = logging.getLogger(__name__)
 
 # Display name for the store we create on first run (only used to label it).
 STORE_DISPLAY_NAME = "optibot-articles"
@@ -40,6 +43,12 @@ CHUNKING_CONFIG = {
 # File Search API does not report an exact per-file chunk count at upload time,
 # so we estimate it from file length + the chunking config (see estimate_chunks).
 CHARS_PER_TOKEN = 4
+
+# Polling cadence + safety ceiling for the async upload/index operation. Support
+# articles are small, so 300s is generous; the timeout exists so a hung operation
+# fails loudly instead of blocking the daily job forever.
+POLL_INTERVAL_SECONDS = 3
+WAIT_TIMEOUT_SECONDS = 300
 
 
 def get_client() -> genai.Client:
@@ -64,9 +73,10 @@ def ensure_file_search_store(client: genai.Client) -> str:
     store = client.file_search_stores.create(
         config={"display_name": STORE_DISPLAY_NAME}
     )
-    print(
+    log.warning(
         "Created File Search Store. Save this to .env as FILE_SEARCH_STORE_NAME "
-        f"to reuse it on the next run:\n    FILE_SEARCH_STORE_NAME={store.name}"
+        "to reuse it on the next run: FILE_SEARCH_STORE_NAME=%s",
+        store.name,
     )
     return store.name
 
@@ -83,46 +93,105 @@ def estimate_chunks(text: str) -> int:
 
 
 def _wait(client: genai.Client, operation):
-    """Block until an upload/import operation finishes."""
+    """Block until an upload/index operation finishes (it runs async).
 
-    # wait until the operation is done (upload file is async)
+    Raises TimeoutError if it does not finish within WAIT_TIMEOUT_SECONDS so a
+    stuck operation surfaces as a failed run instead of hanging the daily job.
+    """
+    deadline = time.monotonic() + WAIT_TIMEOUT_SECONDS
     while not operation.done:
-        time.sleep(3)
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"File Search operation did not finish within {WAIT_TIMEOUT_SECONDS}s"
+            )
+        time.sleep(POLL_INTERVAL_SECONDS)
         operation = client.operations.get(operation)
     return operation
 
 
-def upload_files(client: genai.Client, store_name: str, paths: list[Path]) -> int:
-    """Upload + index the given .md files into the File Search Store.
+def _documents_by_slug(client: genai.Client, store_name: str) -> dict[str, list[str]]:
+    """Map each indexed document's slug (display_name) to its resource name(s).
+
+    A slug can map to several names if a previous run left duplicates behind;
+    upsert deletes all of them so the store self-heals.
+    """
+    mapping: dict[str, list[str]] = {}
+    for doc in client.file_search_stores.documents.list(parent=store_name):
+        mapping.setdefault(doc.display_name, []).append(doc.name)
+    return mapping
+
+
+def upload_files(
+    client: genai.Client,
+    store_name: str,
+    paths: list[Path],
+    *,
+    replace: bool = True,
+) -> int:
+    """Upsert the given .md files into the File Search Store.
 
     Returns the (estimated) number of chunks embedded, for logging.
 
-    NOTE: this uploads unconditionally. Delta detection (only upload changed
-    files) lives in Part 3 / delta.py; deleting a slug's previous document before
-    re-uploading an "updated" article is a Part 3 concern and not handled here.
+    With replace=True (default) every file's existing same-slug document(s) are
+    deleted before the new version is indexed. This makes the operation
+    idempotent — re-running never duplicates, and an "updated" article's stale
+    version is removed instead of piling up alongside the new one (the Part 3
+    concern the old NOTE deferred). Pass replace=False only for a store known to
+    be empty (first-ever load) to skip the lookup.
+
+    An operation that finishes in an error state raises, so a failed index is a
+    failed run (state is not saved -> the file is retried next run) rather than a
+    silent gap. Because upserts are idempotent, that retry is safe.
     """
+    if not paths:
+        return 0
+
+    existing = _documents_by_slug(client, store_name) if replace else {}
     total_chunks = 0
     for path in paths:
+        slug = path.stem  # human-readable doc key
+        if replace:
+            for name in existing.get(slug, []):
+                # force=True: a document that already holds chunks is "non-empty",
+                # and the API refuses to delete it without this flag.
+                client.file_search_stores.documents.delete(
+                    name=name, config={"force": True}
+                )
+
+        # Stamp the content hash onto the document so the next run can rebuild
+        # the delta state straight from the store (see delta.load_state_from_store)
+        # — no separate state file to persist or lose.
+        text = path.read_text(encoding="utf-8")
         operation = client.file_search_stores.upload_to_file_search_store(
             file_search_store_name=store_name,
             file=str(path),
             config={
-                "display_name": path.stem,  # slug, human-readable doc key
+                "display_name": slug,
                 # .md has no OS-level mimetype on Windows, so set it explicitly.
                 "mime_type": "text/markdown",
                 "chunking_config": CHUNKING_CONFIG,
+                "custom_metadata": [
+                    {
+                        "key": delta.HASH_METADATA_KEY,
+                        "string_value": delta.content_hash(text),
+                    }
+                ],
             },
         )
         operation = _wait(client, operation)
-        chunks = estimate_chunks(path.read_text(encoding="utf-8"))
+        if getattr(operation, "error", None):
+            raise RuntimeError(f"indexing failed for {path.name}: {operation.error}")
+
+        chunks = estimate_chunks(text)
         total_chunks += chunks
-        print(f"  indexed {path.name}  (~{chunks} chunks)")
+        log.info("indexed %s (~%d chunks)", path.name, chunks)
     return total_chunks
 
 
 if __name__ == "__main__":
+    config.setup_logging()
     files = sorted(config.ARTICLES_DIR.glob("*.md"))
     client = get_client()
     store_name = ensure_file_search_store(client)
     chunks = upload_files(client, store_name, files)
-    print(f"Uploaded {len(files)} files, ~{chunks} chunks -> store {store_name}")
+    log.info("uploaded %d files, ~%d chunks -> store %s", len(files), chunks, store_name)
