@@ -3,6 +3,11 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load variables from a local .env file (no-op if the file is absent).
+load_dotenv()
+
 # --- Paths ---------------------------------------------------------------
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "data"
@@ -14,8 +19,8 @@ LOGS_DIR = ROOT_DIR / "logs"
 # Generic name so it works for OpenAI or Gemini (per the brief).
 API_KEY = os.getenv("API_KEY")
 
-# Reuse an existing vector store across daily runs; created on first run if empty.
-VECTOR_STORE_ID = os.getenv("VECTOR_STORE_ID")
+# Reuse an existing Gemini File Search Store across daily runs; created on first run if empty.
+FILE_SEARCH_STORE_NAME = os.getenv("FILE_SEARCH_STORE_NAME")
 
 # Zendesk Help Center base for OptiSigns support articles.
 ZENDESK_BASE_URL = os.getenv(
