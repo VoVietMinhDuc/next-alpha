@@ -1,0 +1,34 @@
+# Secrets — never bake any env file into the image (key stays a runtime -e/--env-file).
+.env
+.env.*
+!.env.sample
+
+# VCS & CI
+.git
+.gitignore
+.github
+
+# Python caches / virtualenvs
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Tests & dev-only deps (not needed in the runtime image)
+tests/
+requirements-dev.txt
+pytest.ini
+
+# Generated artefacts (produced at runtime, not baked in)
+logs/
+data/
+
+# Docs, notes, editor cruft
+docs/
+*.md
+!README.md
+.vscode/
+.idea/
+.DS_Store

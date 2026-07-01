@@ -61,13 +61,18 @@ def run() -> int:
     #    update — an "updated" article replaces its old doc, and a failed/retried
     #    run is safe because upserts are idempotent. If the upload raises, the
     #    store's hashes stay unchanged -> the delta is re-detected next run.
-    chunks = 0
+    chunks_est = 0
     if to_upload:
-        chunks = uploader.upload_files(client, store_name, to_upload)
+        chunks_est = uploader.upload_files(client, store_name, to_upload)
     else:
         log.info("no changes to upload; store already up to date")
 
-    # 5. Log counts
+    # 5. Log counts. File counts are exact. The chunk count is an ESTIMATE — the
+    #    Gemini File Search API does not report actual per-document chunk counts (a
+    #    Document exposes only size_bytes/state), so it is derived from the chunking
+    #    config. We also record the store's own API-reported totals (document count
+    #    and byte size) as provider-sourced ground truth for "how much is embedded".
+    store = client.file_search_stores.get(name=store_name)
     log_run(
         {
             "started_at": started,
@@ -76,7 +81,9 @@ def run() -> int:
             "added": len(changes["added"]),
             "updated": len(changes["updated"]),
             "skipped": len(changes["skipped"]),
-            "chunks_embedded": chunks,
+            "chunks_embedded_est": chunks_est,
+            "documents_in_store": getattr(store, "active_documents_count", None),
+            "store_size_bytes": getattr(store, "size_bytes", None),
         }
     )
     return 0

@@ -1,6 +1,6 @@
-# Pin versions before submitting. Trim to what you actually use.
-requests>=2.31
-google-genai>=1.0
-markdownify>=0.13
-beautifulsoup4>=4.12
-python-dotenv>=1.0
+# Runtime dependencies (pinned for reproducible builds).
+requests==2.34.2
+google-genai==2.10.0
+markdownify==1.2.3
+beautifulsoup4==4.15.0
+python-dotenv==1.2.2
