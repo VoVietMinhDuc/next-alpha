@@ -5,6 +5,8 @@ Support chatbot: ingests OptiSigns articles into clean Markdown, serves them via
 
 **Stack:** Python · Gemini File Search API (`google-genai`) · Docker · DigitalOcean droplet (cron).
 
+📊 **Live daily-job logs:** http://178.128.98.214:8888/logs/
+
 ## Architecture
 
 ```
