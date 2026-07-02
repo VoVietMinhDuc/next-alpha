@@ -57,7 +57,11 @@ class TestGetClient:
 
         client = uploader.get_client()
 
-        fake_client_cls.assert_called_once_with(api_key="secret-key")
+        fake_client_cls.assert_called_once()
+        kwargs = fake_client_cls.call_args.kwargs
+        assert kwargs["api_key"] == "secret-key"
+        # An explicit HTTP timeout is set so a stalled request fails loudly.
+        assert kwargs["http_options"].timeout == uploader.HTTP_TIMEOUT_SECONDS * 1000
         assert client is fake_client_cls.return_value
 
 
