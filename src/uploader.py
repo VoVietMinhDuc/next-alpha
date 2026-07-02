@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from google import genai
+from google.genai import types
 
 from . import config, delta
 
@@ -45,16 +46,28 @@ CHUNKING_CONFIG = {
 CHARS_PER_TOKEN = 4
 
 # Polling cadence + safety ceiling for the async upload/index operation. Support
-# articles are small, so 300s is generous; the timeout exists so a hung operation
-# fails loudly instead of blocking the daily job forever.
+# articles are small and usually index in well under a second, so we start with a
+# short interval (fast ops return almost immediately) and back off up to a ceiling
+# so a genuinely slow op doesn't hammer the API. The timeout exists so a hung
+# operation fails loudly instead of blocking the daily job forever.
+INITIAL_POLL_INTERVAL_SECONDS = 0.5
 POLL_INTERVAL_SECONDS = 3
 WAIT_TIMEOUT_SECONDS = 300
+
+# Per-request HTTP timeout for the genai client. WAIT_TIMEOUT_SECONDS only bounds
+# the async index-polling loop; without this, a stalled upload/index HTTP call
+# (a hung connection, proxy, or firewall) blocks the run forever instead of
+# failing loudly. Expressed in milliseconds, as the SDK expects.
+HTTP_TIMEOUT_SECONDS = 60
 
 
 def get_client() -> genai.Client:
     """Return an authenticated Gemini client built from config.API_KEY."""
     config.require("API_KEY", config.API_KEY)
-    return genai.Client(api_key=config.API_KEY)
+    return genai.Client(
+        api_key=config.API_KEY,
+        http_options=types.HttpOptions(timeout=HTTP_TIMEOUT_SECONDS * 1000),
+    )
 
 
 def ensure_file_search_store(client: genai.Client) -> str:
@@ -99,13 +112,15 @@ def _wait(client: genai.Client, operation):
     stuck operation surfaces as a failed run instead of hanging the daily job.
     """
     deadline = time.monotonic() + WAIT_TIMEOUT_SECONDS
+    interval = INITIAL_POLL_INTERVAL_SECONDS
     while not operation.done:
         if time.monotonic() >= deadline:
             raise TimeoutError(
                 f"File Search operation did not finish within {WAIT_TIMEOUT_SECONDS}s"
             )
-        time.sleep(POLL_INTERVAL_SECONDS)
+        time.sleep(interval)
         operation = client.operations.get(operation)
+        interval = min(interval * 2, POLL_INTERVAL_SECONDS)
     return operation
 
 

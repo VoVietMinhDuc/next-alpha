@@ -39,10 +39,21 @@ python main.py             # Part 3: full daily job (scrape + delta + upload)
 
 ```bash
 docker build -t optibot .
-docker run --rm \
-  -e API_KEY=... -e FILE_SEARCH_STORE_NAME=... \
-  -v "$(pwd)/logs:/app/logs" \
-  optibot                       # runs once, writes logs/<run>.json to host, exits 0
+
+# Fill .env first (cp .env.sample .env). Secrets are passed at runtime, never
+# baked into the image. Runs once and exits 0. Works as-is on PowerShell/bash/Linux/mac.
+docker run --rm --env-file .env optibot
+
+# ...or pass secrets inline instead of a file:
+docker run --rm -e API_KEY=... -e FILE_SEARCH_STORE_NAME=... optibot
+```
+
+To also keep each run's JSON artefact on the host, add a volume mount — this is the
+one place the path syntax differs per shell:
+
+```bash
+docker run --rm --env-file .env -v "$(pwd)/logs:/app/logs" optibot     # bash / Linux / macOS
+docker run --rm --env-file .env -v "${PWD}/logs:/app/logs" optibot     # PowerShell (Windows)
 ```
 
 ## Chunking strategy
