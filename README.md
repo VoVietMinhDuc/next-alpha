@@ -10,13 +10,15 @@ re-scrapes and uploads only what changed.
 ## Architecture
 
 ```
-main.py            Daily job orchestrator (scrape -> delta -> upload), runs once & exits 0
-src/scraper.py     Part 1: Zendesk API -> clean Markdown (<slug>-<id>.md)
-src/uploader.py    Part 2: create/reuse Gemini File Search Store, upload via API
-src/delta.py       Hash-based add/update/skip detection (state read from the store itself)
-src/config.py      Env-based config (no hard-coded keys)
-data/articles/     Generated .md files
-logs/              Per-run JSON artefacts (added/updated/skipped/chunks)
+main.py               Daily job orchestrator (scrape -> delta -> upload), runs once & exits 0
+src/scraper.py        Part 1: Zendesk API -> clean Markdown (<slug>-<id>.md)
+src/uploader.py       Part 2: create/reuse Gemini File Search Store, upload via API
+src/ask.py            Part 2: query the assistant (OptiBot prompt), grounded + cited
+src/delta.py          Hash-based add/update/skip detection (state read from the store itself)
+src/config.py         Env-based config (no hard-coded keys)
+src/inspect_store.py  Dev helper: list store documents / run a grounded query
+data/articles/        Generated .md files
+logs/                 Per-run JSON artefacts (counts + store stats)
 ```
 
 ## Setup
@@ -24,14 +26,30 @@ logs/              Per-run JSON artefacts (added/updated/skipped/chunks)
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.sample .env        # then fill in API_KEY (and FILE_SEARCH_STORE_NAME after first run)
+cp .env.sample .env        # then fill in API_KEY
 ```
+
+> ### ⚠️ Reuse the same store — manual step after the first run
+>
+> Leave `FILE_SEARCH_STORE_NAME` **blank on the very first run**. The uploader then
+> creates a new File Search Store and logs its name, e.g.:
+>
+> ```
+> FILE_SEARCH_STORE_NAME=fileSearchStores/optibotarticles-xxxxxxxxxxxx
+> ```
+>
+> **You must copy that value back into `.env`** (and into the server's env file when
+> deploying). Every later run reuses **that same store** instead of creating a brand
+> new one and re-embedding everything from scratch — and it's what lets the delta
+> detection compare against the previous run. Skip this step and each run starts a
+> fresh, empty store.
 
 ## Run locally
 
 ```bash
 python -m src.scraper      # Part 1 only: scrape -> data/articles/*.md
-python -m src.uploader     # Part 2 only: upload to vector store
+python -m src.uploader     # Part 2 only: upload to the File Search Store
+python -m src.ask "How do I add a YouTube video?"   # Part 2: ask the assistant (cited answer)
 python main.py             # Part 3: full daily job (scrape + delta + upload)
 ```
 
@@ -119,11 +137,13 @@ A sample artefact looks like:
 
 ```json
 {"started_at": "...", "finished_at": "...", "total": 40,
- "added": 0, "updated": 0, "skipped": 40, "chunks_embedded": 0}
+ "added": 0, "updated": 0, "skipped": 40,
+ "chunks_embedded_est": 0, "documents_in_store": 40, "store_size_bytes": 356188}
 ```
 
 (First run: `added: 40`. Every run afterwards: `skipped: 40` — proof only the
-delta is ever uploaded.)
+delta is ever uploaded. `documents_in_store`/`store_size_bytes` are API-reported
+ground truth; `chunks_embedded_est` is an estimate — see *Chunking strategy*.)
 
 ![Daily job logs served over HTTP from the droplet](docs/logs-1.png)
 ![A run's JSON artefact with add/update/skip counts](docs/logs-2.png)
